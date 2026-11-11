@@ -1,0 +1,75 @@
+import adapter from '@sveltejs/adapter-static';
+import { sveltekit } from '@sveltejs/kit/vite';
+import path from 'path';
+import svelteMd from 'vite-plugin-svelte-md';
+import { rules as pluginRules } from 'eslint-plugin-svelte';
+import svelteMdOption from './tools/vite-plugin-svelte-md-option.mjs';
+
+import generateRoutes from './tools/generate-routes.mjs';
+import { createLogger, type UserConfig } from 'vite';
+import { fileURLToPath } from 'url';
+
+// Some dependencies of the docs expect `self` to exist.
+if (typeof self === 'undefined') {
+	globalThis.self = globalThis;
+}
+
+generateRoutes();
+
+const dirname = path.dirname(fileURLToPath(import.meta.url));
+
+const BASE_PATH = '/eslint-plugin-svelte';
+
+const logger = createLogger();
+
+/** @type {import('vite').UserConfig} */
+const config: UserConfig = {
+	plugins: [
+		svelteMd(
+			svelteMdOption({
+				baseUrl: BASE_PATH,
+				root: path.join(dirname, '../docs')
+			})
+		),
+		sveltekit({
+			compilerOptions: {
+				preserveWhitespace: true,
+				warningFilter: (warning) => {
+					if (warning.code === 'a11y_no_noninteractive_tabindex') return false;
+					return true;
+				}
+			},
+			extensions: ['.svelte', '.md'],
+			adapter: adapter({ fallback: '404.html' }),
+			paths: { base: BASE_PATH }
+		})
+	],
+	define: {
+		BASE_PATH: JSON.stringify(BASE_PATH),
+		RULES_META: JSON.stringify(Object.values(pluginRules).map((rule) => ({ meta: rule.meta })))
+	},
+	ssr: {
+		// vite-plugin-svelte recognizes svelte-eslint-parser as a library that runs on svelte.
+		// This confuses the SSR on the Dev server.
+		// This is the workaround for that.
+		// https://github.com/sveltejs/vite-plugin-svelte/blob/a1d141e890ac0d1572a46e2bec705aa090236560/packages/vite-plugin-svelte/src/utils/dependencies.ts#L114
+		external: ['svelte-eslint-parser']
+	},
+	build: {
+		commonjsOptions: {
+			ignoreDynamicRequires: true
+		}
+	},
+
+	customLogger: {
+		...logger,
+		warn(msg, options) {
+			if (msg.includes('vite-plugin-svelte-md') && msg.includes('was used to transform files')) {
+				return;
+			}
+			logger.warn(msg, options);
+		}
+	}
+};
+
+export default config;

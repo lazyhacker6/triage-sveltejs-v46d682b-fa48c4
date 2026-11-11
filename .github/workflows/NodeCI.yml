@@ -1,0 +1,169 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+    branches: [main]
+
+env:
+  project_root_path: ./packages/eslint-plugin-svelte
+
+defaults:
+  run:
+    # Setting every runner to bash simplifies command calls;
+    #  plus, every platform supports it
+    shell: bash
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
+
+jobs:
+  lint:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - uses: pnpm/action-setup@73e46992e05b19abd31f2f3c20e0e7370d762115 # v6.1.1
+      - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
+        with:
+          # Same version as the release build (Release.yml)
+          node-version: 26
+      - name: Install Packages
+        run: pnpm install --frozen-lockfile
+      - name: Update resources
+        run: pnpm run update
+        working-directory: ${{ env.project_root_path }}
+      - name: Check changes
+        run: |
+          git add --all && \
+          git diff-index --cached HEAD --stat --exit-code
+      - name: Lint eslint-plugin-svelte
+        run: |
+          pnpm run build
+          pnpm run lint
+        working-directory: ${{ env.project_root_path }}
+      - name: Lint docs-svelte-kit
+        run: |
+          pnpm run build
+          pnpm run lint
+        working-directory: ./docs-svelte-kit
+      - name: Type Coverage
+        run: pnpm run typecov
+        working-directory: ${{ env.project_root_path }}
+
+  test:
+    name: 'Test for ESLint ${{ matrix.eslint }} on Node.js: ${{ matrix.node }} OS: ${{matrix.os}}'
+    runs-on: ${{ matrix.os }}
+    strategy:
+      matrix:
+        include:
+          - { os: ubuntu-latest, eslint: 8, node: 18.x }
+          - { os: ubuntu-latest, eslint: 8, node: 26.x }
+          - { os: ubuntu-latest, eslint: 9, node: 18.x }
+          - { os: ubuntu-latest, eslint: 9, node: 26.x }
+          - { os: ubuntu-latest, eslint: 10, node: 20.x }
+          - { os: ubuntu-latest, eslint: 10, node: 22.x }
+          - { os: ubuntu-latest, eslint: 10, node: 24.x }
+          - { os: ubuntu-latest, eslint: 10, node: 26.x }
+          - { os: windows-latest, eslint: 10, node: 26.x }
+    steps:
+      - name: Checkout
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - uses: pnpm/action-setup@73e46992e05b19abd31f2f3c20e0e7370d762115 # v6.1.1
+      # Build with the same Node.js version as the release build (Release.yml),
+      # then run the tests with the target Node.js version.
+      - name: Setup Node.js 26 for build
+        uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
+        with:
+          node-version: 26
+      - name: Install Packages
+        run: pnpm install --frozen-lockfile
+      - name: Build eslint-plugin-svelte
+        run: pnpm build
+        working-directory: ${{ env.project_root_path }}
+      - name: Setup Node.js ${{ matrix.node }}
+        uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
+        with:
+          node-version: ${{ matrix.node }}
+      # Hack: Install `eslint-plugin-svelte` is necessary for `packages/eslint-plugin-svelte/tests/src/configs` tests.
+      - name: Install eslint-plugin-svelte
+        run: pnpm install -D eslint-plugin-svelte
+        working-directory: ${{ env.project_root_path }}
+      - name: Install ESLint ${{ matrix.eslint }}
+        if: matrix.eslint != 9
+        # Install into the package as well. The package has its own auto-installed
+        # `eslint` peer, so installing only at the workspace root is not enough.
+        run: |
+          pnpm install -D -w eslint@${{ matrix.eslint }}
+          pnpm --filter eslint-plugin-svelte add -D eslint@${{ matrix.eslint }}
+      - name: Check ESLint version
+        run: node -p "'eslint ' + require('eslint/package.json').version"
+        working-directory: ${{ env.project_root_path }}
+
+      - name: Test
+        run: pnpm test
+        working-directory: ${{ env.project_root_path }}
+
+  test-for-svelte-v4:
+    name: 'Test for Svelte v4 on Node.js: ${{ matrix.node }} OS: ${{matrix.os}}'
+    runs-on: ${{ matrix.os }}
+    strategy:
+      matrix:
+        include:
+          - { os: ubuntu-latest, eslint: 9, node: 18 }
+          - { os: windows-latest, eslint: 9, node: 26 }
+    steps:
+      - name: Checkout
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - uses: pnpm/action-setup@73e46992e05b19abd31f2f3c20e0e7370d762115 # v6.1.1
+      - name: Setup Node.js ${{ matrix.node }}
+        uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
+        with:
+          node-version: ${{ matrix.node }}
+      - name: Install svelte@4
+        run: |
+          pnpm install -D svelte@4
+          rm -rf node_modules
+        working-directory: ${{ env.project_root_path }}
+      - name: Install ESLint ${{ matrix.eslint }}
+        run: |
+          pnpm install -D -w eslint@${{ matrix.eslint }}
+          rm -rf node_modules
+      - name: Install Packages
+        run: pnpm install --frozen-lockfile
+      - name: Test
+        run: pnpm run test
+        working-directory: ${{ env.project_root_path }}
+
+  test-for-svelte-v3:
+    name: Test for Svelte v3
+    runs-on: ${{ matrix.os }}
+    strategy:
+      matrix:
+        os: [ubuntu-latest]
+        node: [18]
+    steps:
+      - name: Checkout
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - uses: pnpm/action-setup@73e46992e05b19abd31f2f3c20e0e7370d762115 # v6.1.1
+      - name: Setup Node.js ${{ matrix.node }}
+        uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
+        with:
+          node-version: ${{ matrix.node }}
+      - name: Install svelte@3
+        run: |
+          cd ./packages/eslint-plugin-svelte
+          pnpm install -D svelte@3
+          cd ../..
+          rm -rf packages/eslint-plugin-svelte/node_modules
+          rm -rf docs-svelte-kit/node_modules
+          rm -rf node_modules
+      - name: Install Packages
+        run: pnpm install --frozen-lockfile
+      - name: Test
+        run: pnpm run test
+        working-directory: ${{ env.project_root_path }}

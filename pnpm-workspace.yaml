@@ -1,0 +1,30 @@
+# Do not adopt new versions of dependency libraries within the first 24 hours of their release (to reduce the risk of supply chain attacks).
+minimumReleaseAge: 1440
+
+minimumReleaseAgeExclude:
+  - '@ota-meshi/*'
+  - '@oxc-project/*'
+  - '@rolldown/*'
+  - '@sveltejs/*'
+  - create-vite
+  - devalue
+  - esm-env
+  - esrap
+  - is-reference
+  - locate-character
+  - rolldown-vite
+  - rolldown
+  - svelte-eslint-parser
+  - svelte
+  - typescript-eslint-parser-for-extra-files
+  - vite
+  - zimmerframe
+  - eslint
+  - '@eslint/*'
+  - eslint-visitor-keys
+  - eslint-scope
+  - espree
+
+packages:
+  - 'packages/*'
+  - 'docs-svelte-kit'

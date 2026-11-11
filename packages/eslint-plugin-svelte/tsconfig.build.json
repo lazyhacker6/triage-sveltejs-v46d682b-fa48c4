@@ -1,0 +1,12 @@
+{
+	"extends": "./tsconfig.json",
+	"exclude": [
+		"tests/**/*",
+		"tools/**/*",
+		"typings/**/*",
+		"vite.config.mts",
+		"docs-svelte-kit/**/*.mts",
+		"internal-rules/**/*",
+		"eslint.config.mts"
+	]
+}

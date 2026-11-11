@@ -1,0 +1,20 @@
+{
+	"extends": "$app/tsconfig",
+	"compilerOptions": {
+		"target": "es2020",
+		"module": "NodeNext",
+		"moduleResolution": "Node16",
+		"lib": ["es2020", "dom"],
+		"declaration": true,
+		"strict": true,
+		"noImplicitAny": true,
+
+		"noUnusedLocals": true,
+		"noUnusedParameters": true,
+		"noImplicitReturns": true,
+		"noFallthroughCasesInSwitch": true,
+		"baseUrl": ".",
+		"outDir": "lib"
+	},
+	"include": ["vite.config.ts", "**/*.mts", "**/*.ts"]
+}
